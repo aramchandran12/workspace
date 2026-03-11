@@ -1,0 +1,9 @@
+Cannot lock file hash cache when gradle was aborted
+
+
+run
+gradlew --stop 
+in the terminal for Windows
+For Mac user run
+./gradlew --stop 
+from root of you project
