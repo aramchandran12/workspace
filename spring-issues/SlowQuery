@@ -1,0 +1,20 @@
+The series of numbers you provided (4400 4800 4800 4900 5000 5000 5000 5000 5000 5000 5000 25) in your log looks like a latency profile or a time-series of response times in milliseconds rather than standard HTTP status codes.
+Here is an analysis of what these figures likely indicate and why they point to a performance bottleneck:
+1. Interpreting the Data
+	• The Values (4400ms – 5000ms): These represent the time taken to process the GET /approval/api/approvals?size=20 request. A latency of 4.4 to 5.0 seconds for an API call is significantly high, usually indicating the request is hitting a timeout threshold.
+	• The "5000" Plateau: The fact that the latency stays consistently at 5000ms suggests the system has a hard-coded timeout configuration (likely 5 seconds). The request is not finishing naturally; it is being terminated or failing after hitting that limit.
+	• The Final "25": This is likely the size of the payload, the count of returned items, or potentially a residual thread status code, but given the sequence, it is most likely the final successful return after the timeout or a different metric entirely.
+2. Likely Reasons for this Behavior
+The API is struggling to fetch 20 records within the allotted time. Possible root causes include:
+	• Database Lock Contention: Since you are querying approvals, the service may be trying to access a table or row that is currently locked by a long-running background process, a migration, or a concurrent update.
+	• Missing Database Indexes: Fetching a list of "approvals" often involves filtering by user or status. If the database lacks a proper index on the columns used in your WHERE clause, the DB performs a full table scan, which grows exponentially slower as your data volume increases.
+	• N+1 Query Problem: The service might be fetching the 20 approval records and then firing 20 separate, sequential database queries to fetch details for each approval (e.g., fetching user details or metadata for every item).
+	• Downstream Service Timeout: If the "Approvals" API relies on another service (e.g., an Identity service or a Workflow engine) to populate those 20 records, the bottleneck might be that the downstream service is taking ~5 seconds to respond, causing your API to time out.
+3. Recommended Troubleshooting Steps
+Since you have a Support Bundle and Jenkins build logs, I suggest you look for these specific indicators:
+	• Check the 5000ms configuration: Search your Spring Boot application properties or infrastructure (Load Balancer/Gateway) configurations for 5000 or 5s timeouts. Confirming this is a timeout is your first step.
+	• Analyze the Slow Query Log: Enable slow query logging on your database to see if the query associated with /approvals is taking > 4 seconds to execute.
+	• Check for Thread Exhaustion: Look at the thread dump in your support bundle. If many threads are in a WAITING or BLOCKED state, it confirms that the service is running out of capacity to handle new requests while waiting for the database or downstream APIs.
+	• Distributed Tracing: If you have tools like Zipkin, Jaeger, or Spring Cloud Sleuth enabled, look for the specific trace of this request to see exactly which span (DB query vs. external API call) is consuming the 5 seconds.
+Next Step:
+Would you like me to provide a sample SQL EXPLAIN plan query to help you verify if your database is performing a full table scan for that approval lookup? I can also help you interpret the logs if you paste the stack trace or the specific "Long running query" warning from your logs.
