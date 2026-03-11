@@ -1,0 +1,30 @@
+• @Repository: Marks this interface as a Spring-managed component for data access, allowing Spring to handle exception translation (turning database errors into Spring's data exceptions).
+• @Query: Defines custom JPQL (Java Persistence Query Language) or native SQL queries. JPQL works with entity classes (e.g., resource r), while nativeQuery = true allows you to write raw SQL (e.g., dep_resource r).
+• @Modifying: Required for any query that changes data (UPDATE, DELETE, INSERT). It tells Spring that the query is not a SELECT.
+• @Transactional: Manages database transactions.
+	• readOnly = true is an optimization that tells the database/driver that no data will be changed, improving performance.
+• @Lock(LockModeType.PESSIMISTIC_WRITE): Places a "Pessimistic Lock" on the selected rows. It prevents other database users from reading or modifying these rows until your transaction completes (prevents race conditions).
+• @QueryHints: Used here to set the jakarta.persistence.lock.timeout to -2. This is a "skip locked" instruction. If a record is already locked by another process, the query won't wait—it will simply skip that row and move to the next.
+
+• Pessimistic Locking with skip locked: Your findForSync and lockResourcesByIds methods are excellent. By setting jakarta.persistence.lock.timeout to -2, you are implementing a "Skip Locked" pattern. This is the gold standard for high-throughput task queues—it ensures that multiple worker nodes can grab different tasks without waiting for each other or colliding.
+• Native JSONB and Array Handling: Using json_extract_path_text and ANY(depends_on) in native queries is much faster than pulling the entire object into Java memory and filtering it there. You are letting the database do what it does best: aggregate data at the source.
+• Slice vs Page: You are using Slice<ResourceEntity> in findForSync. This is more efficient than Page<T> because it doesn't execute a secondary COUNT query to figure out how many total pages exist, which is a common performance killer in large datasets.
+The "Performance Watch-Outs" (Potential bottlenecks)
+Even with good design, these specific patterns might cause latency as your scale increases:
+1. The Indexing Trap (Casting)
+In getLimitedResourceIdByOrgIdAndResourceLink, you use: SELECT CAST(r.id AS VARCHAR)... If your id column is a native UUID type, casting it to VARCHAR during a JOIN can prevent the database from using the index on that column. The database might be forced to perform a "Full Table Scan" to perform the cast on every row before comparing.
+	• Check: Ensure you have a functional index if you frequently join on casted values, or keep the types matching (UUID to UUID).
+2. JSONB Querying
+You are querying drd.properties->>'resourceLink'. If your dep_resource_data table has millions of rows, this query will be slow unless you have a GIN (Generalized Inverted Index) on the properties JSONB column.
+Without a GIN index, the database must parse the JSON object for every single row in the table to check the value.
+3. Count Operations
+Methods like countPrimaryResourcesByDeploymentId are fine at low volume, but count queries in PostgreSQL can be surprisingly heavy because they have to verify the visibility of every row (MVCC). If you call this method inside a loop (e.g., while iterating through 1,000 deployments), your application will hang.
+
+How to Verify Your "Real-World" Efficiency
+To see if this code is actually efficient, don't look at the Java code—look at the Database Plan.
+	1. Run EXPLAIN (ANALYZE, BUFFERS) on your most complex native queries (like getResourceDetailsByOrgIdAndResourceLink).
+	2. Look for "Filter" vs "Index Cond":
+		○ If you see Index Cond, your query is efficient.
+		○ If you see Filter and Seq Scan, the database is reading everything to find your data.
+	3. Monitor "Shared Hit/Read" ratios: If your Buffers: shared hit is low and read is high, your indexes aren't fitting in memory (RAM), and the DB is hitting the disk, which is the #1 cause of the "timeout" errors you mentioned earlier.
+[[[[ii
