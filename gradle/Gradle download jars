@@ -1,0 +1,7 @@
+Where does Gradle store downloaded jars on the local file system
+
+Wednesday, 18 September 2024
+1:01 PM
+
+On Mac, Linux and Windows i.e. on all 3 of the major platforms, Gradle stores dependencies at:
+~/.gradle/caches/modules-2/files-2.1
